@@ -1,0 +1,506 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | ENUMS
+ * |--------------------------------------------------------------------------
+ */
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum AppointmentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  FORWARDED
+  CANCELLED
+  COMPLETED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+enum NotificationType {
+  APPOINTMENT_REQUEST
+  APPOINTMENT_ACCEPTED
+  APPOINTMENT_REJECTED
+  APPOINTMENT_FORWARDED
+  APPOINTMENT_CANCELLED
+  NEW_MESSAGE
+  SYSTEM
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | USER
+ * |--------------------------------------------------------------------------
+ */
+
+model User {
+  id            Int      @id @default(autoincrement())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  phone         String?
+  role          UserRole
+  isActive      Boolean  @default(true)
+  emailVerified Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient Patient?
+  doctor  Doctor?
+
+  refreshTokens RefreshToken[]
+  notifications Notification[]
+
+  sentMessages Message[] @relation("MessageSender")
+
+  appointmentStatusChanges AppointmentStatusHistory[]
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | PATIENT
+ * |--------------------------------------------------------------------------
+ */
+
+model Patient {
+  id Int @id @default(autoincrement())
+
+  userId           Int       @unique
+  dateOfBirth      DateTime?
+  gender           Gender?
+  address          String?
+  emergencyContact String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  appointments  Appointment[]
+  conversations Conversation[]
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | HOSPITAL
+ * |--------------------------------------------------------------------------
+ */
+
+model Hospital {
+  id Int @id @default(autoincrement())
+
+  name        String
+  address     String
+  city        String
+  state       String
+  postalCode  String?
+  phone       String?
+  email       String?
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments  HospitalDepartment[]
+  timings      HospitalTiming[]
+  doctors      Doctor[]
+  appointments Appointment[]
+
+  @@index([city])
+  @@index([state])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | DEPARTMENT
+ * |--------------------------------------------------------------------------
+ */
+
+model Department {
+  id Int @id @default(autoincrement())
+
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospitals    HospitalDepartment[]
+  doctors      Doctor[]
+  appointments Appointment[]
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | HOSPITAL ↔ DEPARTMENT
+ * |--------------------------------------------------------------------------
+ */
+
+model HospitalDepartment {
+  id Int @id @default(autoincrement())
+
+  hospitalId   Int
+  departmentId Int
+
+  createdAt DateTime @default(now())
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([hospitalId, departmentId])
+  @@index([hospitalId])
+  @@index([departmentId])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | HOSPITAL TIMING
+ * |--------------------------------------------------------------------------
+ */
+
+model HospitalTiming {
+  id Int @id @default(autoincrement())
+
+  hospitalId Int
+  dayOfWeek  DayOfWeek
+
+  openingTime String
+  closingTime String
+
+  isClosed Boolean @default(false)
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  @@unique([hospitalId, dayOfWeek])
+  @@index([hospitalId])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | DOCTOR
+ * |--------------------------------------------------------------------------
+ */
+
+model Doctor {
+  id Int @id @default(autoincrement())
+
+  userId Int @unique
+
+  hospitalId   Int
+  departmentId Int
+
+  licenseNumber   String   @unique
+  specialization  String?
+  qualification   String?
+  experienceYears Int?
+  bio             String?
+  consultationFee Decimal? @db.Decimal(10, 2)
+
+  isAvailable Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+
+  department Department @relation(fields: [departmentId], references: [id])
+
+  availability DoctorAvailability[]
+
+  appointments Appointment[]
+
+  conversations Conversation[]
+
+  forwardedFrom AppointmentForwardHistory[] @relation("ForwardFromDoctor")
+
+  forwardedTo AppointmentForwardHistory[] @relation("ForwardToDoctor")
+
+  @@index([hospitalId])
+  @@index([departmentId])
+  @@index([hospitalId, departmentId])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | DOCTOR AVAILABILITY
+ * |--------------------------------------------------------------------------
+ */
+
+model DoctorAvailability {
+  id Int @id @default(autoincrement())
+
+  doctorId  Int
+  dayOfWeek DayOfWeek
+
+  startTime String
+  endTime   String
+
+  slotDuration Int @default(30)
+
+  isActive Boolean @default(true)
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, dayOfWeek])
+  @@index([doctorId])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | APPOINTMENT
+ * |--------------------------------------------------------------------------
+ */
+
+model Appointment {
+  id Int @id @default(autoincrement())
+
+  patientId Int
+  doctorId  Int
+
+  hospitalId   Int
+  departmentId Int
+
+  appointmentDate DateTime
+  startTime       String
+  endTime         String
+
+  status AppointmentStatus @default(PENDING)
+
+  reason String?
+  notes  String?
+
+  requestedAt DateTime  @default(now())
+  respondedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  doctor Doctor @relation(fields: [doctorId], references: [id])
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+
+  department Department @relation(fields: [departmentId], references: [id])
+
+  statusHistory AppointmentStatusHistory[]
+
+  forwardHistory AppointmentForwardHistory[]
+
+  conversation Conversation?
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([hospitalId])
+  @@index([departmentId])
+  @@index([appointmentDate])
+  @@index([doctorId, appointmentDate])
+  @@index([status])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | APPOINTMENT STATUS HISTORY
+ * |--------------------------------------------------------------------------
+ */
+
+model AppointmentStatusHistory {
+  id Int @id @default(autoincrement())
+
+  appointmentId Int
+
+  oldStatus AppointmentStatus?
+  newStatus AppointmentStatus
+
+  changedBy Int
+
+  remarks String?
+
+  createdAt DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [changedBy], references: [id])
+
+  @@index([appointmentId])
+  @@index([changedBy])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | APPOINTMENT FORWARD HISTORY
+ * |--------------------------------------------------------------------------
+ */
+
+model AppointmentForwardHistory {
+  id Int @id @default(autoincrement())
+
+  appointmentId Int
+
+  fromDoctorId Int
+  toDoctorId   Int
+
+  reason String?
+
+  forwardedAt DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  fromDoctor Doctor @relation("ForwardFromDoctor", fields: [fromDoctorId], references: [id])
+
+  toDoctor Doctor @relation("ForwardToDoctor", fields: [toDoctorId], references: [id])
+
+  @@index([appointmentId])
+  @@index([fromDoctorId])
+  @@index([toDoctorId])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | CONVERSATION
+ * |--------------------------------------------------------------------------
+ */
+
+model Conversation {
+  id Int @id @default(autoincrement())
+
+  patientId Int
+  doctorId  Int
+
+  appointmentId Int @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  doctor Doctor @relation(fields: [doctorId], references: [id])
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+
+  messages Message[]
+
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | MESSAGE
+ * |--------------------------------------------------------------------------
+ */
+
+model Message {
+  id Int @id @default(autoincrement())
+
+  conversationId Int
+  senderId       Int
+
+  ciphertext String
+
+  messageType MessageType @default(TEXT)
+
+  sentAt DateTime @default(now())
+
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  sender User @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([sentAt])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | NOTIFICATION
+ * |--------------------------------------------------------------------------
+ */
+
+model Notification {
+  id Int @id @default(autoincrement())
+
+  userId Int
+
+  type NotificationType
+
+  title   String
+  message String
+
+  isRead Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isRead])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | REFRESH TOKEN
+ * |--------------------------------------------------------------------------
+ */
+
+model RefreshToken {
+  id Int @id @default(autoincrement())
+
+  userId Int
+
+  tokenHash String @unique
+
+  expiresAt DateTime
+
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
